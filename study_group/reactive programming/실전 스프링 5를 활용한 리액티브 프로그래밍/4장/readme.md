@@ -425,3 +425,324 @@ https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html
 그니까 실제로 onNext()를 해서 원소를 subscriber에게 건네주는 쓰레드랑, 리소스를 초기화 해주는 스레드가 다를수 있다는 장점인것 같다.
 
 
+----
+
+p169
+
+
+## 에러 처리하기 
+
+onError로 처리를 하면 된다, 다만 최종 구독자가 onError 핸들러를 정의하지 않으면 UnsupportedOperationException 이 발생한다. (onError 이 불려야 할때에)
+
+onError은 스트림이 종료된 것으로 판단된다. 시그널을 받으면 시퀀스가 실행을 중지한다.
+
+대응 방법 
+1. sucscribe 연산자에서 onError 에 대해 핸들러 정의
+2. onErrorReturn 연산자 - 예외 발생시 사전 정의된 static 값 또는 예외로 계산된 값으로 대체 (스트림의 리턴값이 저거로 바뀜)
+3. onErrorResume 연산자로 예외 catch 하고 대체 워크플로 생성
+4. onErrorMap 연산자로 예외를 catch해서 다른 예외로 Map
+5. 오류 발생시 다시 실행 시도하는 리액티브 워크플로 정의 - retry 연산자가 소스 리액티브 시퀀스 다시 구독하는것.
+
+또, 빈 스트림이 들어오는 경우 `defaultIfEmpty` 혹은 `switchIfEmpty` 연산자로 리액티브 스트림 반환
+
+timeout 연산자를 사용해서 작업 대기시간 제한하고 TimeoutException 발생시킬 수 있다.
+
+```java
+public Flux<String> recommendedBooks(String userId){
+    return Flux.defer(() -> {
+            if(random.nextInt(10)<7){
+                return Flux.<String>error(new RuntimeException("Err"))
+                    .delaySequence(Duration.ofMillis(100));
+            } else{
+                return Flux.just("해리포터", "나미야 잡화점").delayElements(Duration.ofMillis(50));    
+            }   
+        }
+    ) .doOnSubscribe(s->log.info("Request for {}",userId));
+    
+}
+```
+
+구독자는 flux를 받아가서 subscribe할때 시점의 Flux를 사용해 책추천을 받을 수 있다. (여기서는 static 값으로 해리포터를 넣어놨지만)
+하지만 이 서비스는 60%확률로 오류가 난다. - error를 내보낸다
+에러가 나는 경우에는 subscribe한지 100ms 이후에 onError() 함수가 호출된다.
+API에서는 쓰로틀링을 걸어줘야 API를 과도하게 요청하는 케이스를 막을 수 있다. 100ms, 50ms 의 쓰롵틀링을 걸어준다.
+```java
+Flux.just("user-1")
+        .flatMap(user -> 
+                        recommendedBooks(user)
+                        .retryBackoff(5, Duration.ofMillis(100))
+                        .timeout(Duration.ofSeconds(5))
+                        .onErrorResume(e-> Flux.just("마션"))
+        )
+        .subscribe(
+                b-> log.info("onNext"),
+                e-> log.warn("onError"),
+                ()-> log.info("complete")
+        );
+                        
+```
+
+retryBackoff는 5번 시도하는데, 5번 시도하다가 3초이상 지나버리면 Error 시그널을 발생시킨다.  
+
+
+## 배압 다루기  
+
+리액티브 스트림 스펙에서 request를 통해 컨슈머에게 과하게 밀어넣는걸 막을 수 있다.
+
+- onBackPressureBuffer 은 제한되지 않은 요구를 요청, 큐로 버퍼링
+- onBackPressureDrop은 Integer.Max 요청, 데이터 넘치면 삭제되지만, 사용자 정의 핸들러로 삭제 원소 처리 가능
+- onBackPressureLast는 위와 비슷 but 가장 최근 수신 원소 기억
+- onBackPressureError - 컨슈머가 처리 못하면 Error
+
+limitRate(n) 을 통해 n개 이상원소가 요청되지 않게 .producer를 보호 한다. ( 스트림을 닫아 버린다 )
+
+## HOT, COLD 스트림
+
+COLD: 구독자 나타날때마다 모든 시퀀스 데이터가 해당 구독자에 생성 (x 구독자 x data)
+HOT: 데이터 broadcasting 시나리오처럼, 첫 구독자 등장전부터 원소 생성 가능. 다만 구독자가 구독한 이후의 데이터만 받을 수 있다. 
+대부분의 HOT 퍼블리셔는 processor 상속. just는 게시자가 빌드될 때 값이 한번만 계산되고, 새 구독자가 도착하면 다시 계산안되는 HOT 퍼블리셔
+
+just를 defer로 래핑하면 subscribe부터 동작하는 cold 퍼블리셔
+
+## 스트림 원소를 여러 곳으로 보내기
+
+cold 퍼블리셔의 결과를 hot publisher로 전환 가능하다. `connectableFlux` - 다른 모든 가입자가 데이터 처리 가능하게 캐싱된다.
+
+```java
+Flux<Integer> source = Flux.range(0,3)
+        .doOnSubscribe(s -> log.info("new subscription on COLD"));
+
+ConnectableFlux<Integer> conn = source.publish();
+
+conn.subscribe(e->log.info("[1] onNext"));
+conn.subscribe(e->log.info("[2] onNext"));
+
+conn.connect();
+```
+
+이렇게 하면, connect()가 불린 뒤, 
+"new subscription on COLD" 가 불리고,
+subscriber [1], [2]는 동시에 0,1,2를 받기 시작한다.
+
+## 스트림 내용 캐싱
+ConnectableFlux 안쓰고, cache 연산자를 써도 된다. 
+
+```java
+Flux<Integer> source = Flux.range(0,3)
+        .doOnSubscribe(s -> log.info("new subscription on COLD"));
+
+Flux<Integer> cachedSource = source.cache(Duration.ofSeconds(1));
+cachedSource.subscribe(e->log.info("[1] onNext"));
+cachedSource.subscribe(e->log.info("[2] onNext"));
+        
+Thread.sleep(1200);
+cachedSource.subscribe(e->log.info("[3] onNext"));
+
+```
+이렇게 하면 3이 늦게 subscribe되면서 다시 new subscription on COLD가 불린다.
+
+[1],[2]는 캐시때문에 같이 동작하는데.
+
+
+## 스트림 내용 공유
+
+ConnectableFlux 로 여러 개의 구독자에 대한 이벤트 멀티캐스트가 가능해졌다. 다만 구독자가 나타나기전에도 hot처럼 이벤트 발생시키고 있게 하려면 `share`
+
+`share`은 구독자가 각 신규 구독자에게 이벤트를 전파하는 방식이다.
+
+```java
+Flux<Integer> source = Flux.range(0,5)
+    .delayElements(Duration.ofMillis(100))
+    .doOnSubscribe(s -> log.info("New subscription cold"))
+
+Flux<Integer> cachedSource = source.share();
+
+cachedSource.subscribe(e->log.info("[1] onNext"));
+Thread.sleep(400);
+cachedSource.subscribe(e->log.info("[2] onNext"));
+
+```
+이러면 생각해보면 4초 뒤부터 시작하니까,
+[1] 0
+[1] 1
+[1] 2
+[1] 3
+[2] 3
+
+이 된다. 즉, share인거다. [1] 구독자가 [2]에게 자기가 수신한 원소를 전달했다.
+
+
+## 시간 다루기
+
+interval : 주기적 이벤트 생성
+delayElements: 원소 onNext 지연
+delaySequence: 모든 신호 지연
+
+timestamp
+timeout
+elapsed - onNext 사이 시간간격 정보를 tuple에 담는다 .index()처럼 
+
+근데 elapsed보면 꼭 Duration.ofMillis(100) 같지는 않아. 자바의 ScheduledExecutorService사용해서 그렇다.
+
+
+## 리액티브 스트림을 조합하고 변환하기
+
+동일한 연산자 사용하려면 transform 연산자를 써서, 공통부분을 별도의 객체로 추출할 수 있다. - 재사용이 가능
+
+
+```java
+Function<Flux<String>, Flux<String>> logUserInfo = 
+    stream -> stream.index().doOnNext(tp -> log.info("hi{} {}",tp.getT1(), tp.getT2()))
+                    .map(Tuple::getT2)
+
+Flux.range(1000, 3)
+    .transform(logUserInfo)
+    .subscribe(e -> log.info("onNext{}",e));
+```
+
+이런식으로 .index().doOnNext().map()를 바깥으로 뺄 수 있게 됐다.
+
+
+compose 연산자 or transform 연산자는 publisher쪽에 모든 구독자마다 동일하게 스트림 변환작업을 거칠때 사용한다.
+reactor project에서 transform
+RXJava에서 compose 로 사용한다.
+
+## Processor
+Publisher면서 Subscriber 
+- 구독이 가능하고, 
+- 시그널을 수동으로 보낼 수 있다. 
+  - subscriber은 onNext시에 어떤 활동을 하는데, 이때 자기에게 등록된 subscriber의 onNext()함수를 부를수있다.
+
+보통은 사용하지 않느걸 권장 - 대부분의 processor은 연산자 조합으로 대체 가능.
+
+리액터에 3가지 종류 프로세서
+
+### Direct 프로세서
+프로세서 입력부를 사용자가 직접 구현해서 데이터 푸시만 가능 (unlimited 요청)
+- DirectProcessor : 배압처리를 하지 않는다 , 다수 구독자에게 이벤트 게시 때에 사용
+- UnicastProcessor: 하나의 구독자에
+
+### Synchronous 프로세서
+- EmitterProcessor : 1publisher, 동기적으로 여러 구독자에게 서비스 제공 
+- RelayProcessor : 위 프로세서 + cache 전략
+업스트림 Publisher 구독하거나, 수동 데이터 푸시 가능. (request가 가능하다)
+
+### Asynchronous 프로세서
+- WorkQueueProcessor - 리액티브 스트림의 요구사항 일부 충족 x 리소스 절약
+- TopicProcessor - 리액티브 스트림과 호환, 다운스트림 Subscriber마다 별도의 스레드 생성해 처리.
+여러 업스트림 publisher - 다운스트림에게 푸시 
+ RingBuffer 데이터 구조
+
+
+## 리액터 프로젝트 테스트 및 디버깅
+
+`hook.onOperatorDebug()`
+doOnNext().onOperatorDebug() 를 스트림에 붙이면 조립하는 모든 스트림에 대해 스택 트레이스를 수집한다. 
+Flux와 Mono는 모두 log라는 메서드를 제공해서, 연산자를 통과하는 모든 신호를 기록한다. 
+
+## 리액터 추가기능
+reactor 기능확장을 위한 Addons 
+reactor-adapter
+reactor-logback
+    고속의 비동기 로깅 제공 
+reactor-extra 모듈 존재
+    TupleUtils - Tuple클래스 사용 코드 단순화 
+    MathFlux : 숫자 스트림 계산 클래스
+    ForkJoinPoolScheduler : 리액터의 스케줄러에 자바의 ForkJoinPool 
+
+reactor-kafka
+reactor-netty
+    * spring webflux : 리액터 네티 사용중 (논블로킹 웹 앱을 위함)
+
+
+# 리액터 프로젝트 심화학습
+
+## 조립단계
+
+- 빌더처럼 조립하는데 build()를 안부른다.
+- reactor API는 immutability 제공한다. 적용된 각 연산자는 새로운 객체를 생성한다.
+스트림의 타입을 활용해 (FluxConCatArray인지 Flux인지) 효율화 가능
+
+## 런타임단계
+request를 받아 onNext를 호출하는 런타임 단계에서는 Subscription#request 호출이 멀티스레드를 위해 volatile 필드에 쓰기를 하게 된다. (몇 회 요청)
+이 호출을 줄이는것이 주가 된다. 
+
+## 리액터의 스레드 스케줄링 모델
+
+다른 워커로 실행을 전환하는 네가지 연산자가 존재한다
+
+### PublishOn 연산자
+런타임 실행의 일부를 지정된 워커로 이동한다.
+.publishOn(scheduler) 이후의 .map() 같은 연산자들은 publishOn에서 만들어지는 queue에 들어온값을 처리한다
+이러면 publishOn() 전후로 쓰레드가 나뉘고, publishOn 전까지만 연산자의 연산이 끝나면 바로 리턴해줄 수 있어서 속도가 빨라진다.
+다만 serializability는 지켜진다.
+![img.png](img.png)
+subscribe가 불린 쓰레드에서 2번 map이 불린다.
+허나 publishOn때문에 1번 scheduler에서 새 쓰레드를 가져와 4번 map을 실행시킨다.
+System.println() 함수는 map이불리는 저 쓰레드에서 실행하게 된다.
+
+### subscribeOn 연산자
+이번에는 Mono<Callable<T>> 라고 할때, .subscribe()를 호출하는 스레드에서 Callable.call() 이 실행되게 된다.
+구독을 수행할 워커를 지정하는 subscribeOn(scheduler)를 하면, 별도의 Runnable(쓰레드) 안에서 구독을 하게 된다.
+
+Publisher는 호출된 스레드에서 데이터를 보내기 시작할 수 있기 때문에, subscribeOn 때문에 구독자가 A쓰레드에서 구독을 하게된다면,
+request도 A쓰레드에서, publisher가 호출하는 onNext도 A쓰레드에서 실행이 된다. 다만, publishOn으로 바뀌면 원소는 publishOn이 된 쓰레드 B에서 구독자의 함수를 실행하게 된다.
+![img_1.png](img_1.png)
+
+### parallel 연산자
+flux의 workloads (event) 들을 차례로 수행한다. -> 병렬로 수행시킨다.
+```java
+parallel-1 -> 1
+parallel-2 -> 2
+parallel-1 -> 3
+parallel-2 -> 4
+parallel-1 -> 5
+parallel-2 -> 6
+parallel-1 -> 7
+parallel-1 -> 9
+parallel-2 -> 8
+parallel-2 -> 10
+```
+parallelFlux를 사용한다
+
+### Scheduler 
+scheduler.schedule() : Runnable 작업 예약
+createWorker : Runnable 작업 예약할 수 있는 worker 인터페이스의 인스턴스를 제공한다.
+
+scheduler는 워커 풀인거고, worker는 Thread하나인거.
+
+- SingleScheduler : 모든 작업이 한개 전용 워커에 예약
+- ParallelScheduler: 고정된 크기의 작업자 풀에서 작동 ( CPU 코어수만큼) `Scheduler.parallel()` 
+- ElasticScheduler: 동적으로 작업자 만들고, 스레드 풀 캐시 - I/O 집약적 작업에 유리하다.
+
+### 리액터 컨텍스트
+
+Context는 런타임단계에 필요한 컨텍스트 정보에 엑세스하기 위함이다. 이를테면 다음 스트림에게 넘길 값은 "민수"인데, id값도 쓰면좋겠다면
+"민수": 12345 같은 hashmap을 넣어놓으면 나중에도 이걸 조회해서 id에따라 민수를 다르게 처리할 수 있다.
+https://projectreactor.io/docs/core/release/reference/#context
+contextWrite로 바뀌었다.
+
+upstream에 context를 넣어주는 방식이다. subscription이 propagated될 때 각 operator가 사용할 수 있게 해당 operator 클래스에 저장된다.
+![img_2.png](img_2.png)
+
+contextWrite가 있으면 subscribe때에 가장먼저 호출이 된다. (subscription 전파와 관련된 함수라서)
+![img_3.png](img_3.png)
+
+그리고 subscription 전파때 사용되기 때문에, 연산자중에 자기보다 밑에있는 연산자에는 적용되지 않는다.
+![img_4.png](img_4.png)
+
+## 리액터 내부 구조
+리액터만 잘하는 게 있다.
+### 매크로 퓨전
+
+Flux.just(1).publishOn(...).map()
+
+이경우에는 하나의 원소를 바로 다른 쓰레드로 옮기는데, 괜히 queue를 쓰게 된다 -> subscribeOn으로 실행시킨다.
+
+이런식으로 조립을 효율화
+
+### 마이크로 퓨전
+
+request()는 costly하다. ConditionalSubscriber를 통해 filter로직을 대체하면 비효율적인 request()가 없다.
+
+
