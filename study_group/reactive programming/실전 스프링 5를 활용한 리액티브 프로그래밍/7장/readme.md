@@ -304,3 +304,382 @@ public Mono<Book> updatedBookYearByTitle(
 ```
 
 비즈니스 요청에 가장 적합한 옵션을 선택해야 한다. 최적화!
+
+
+----
+
+# 리액티브 리포지토리 동작원리
+ 
+스프링 데이터 리액티브 리포지토리는 DB 드라이버의 api를 사용한다. 이런 드라이버는 동기식, 비동기식이 있지만 리액티브 API로 래핑이야 가능하다.
+
+리액티브 스트림 호환 MongoDB 드라이버 사용한 `ReactiveMongoRepository` 
+- `ReactiveSortingRepository` : ReactiveCrudRepository 인터페이스 상속하고, 쿼리 정렬가능한 findAll 메서드 추가됨
+  - ReactiveCrudRepository == 엔티티 저장 및 검색, 삭제하는 메서드 가진다.  (Mono<T> save(T entity) 등 )
+- `ReactiveQueryByExampleExecutor`  : QBE 언어로 쿼리가능 
+두개 상속한다.
+
+
+>QBE란? query만들필요없이 객체로 쿼리한다.
+ ```java
+Person person = new Person();                         
+person.setFirstname("Dave");
+
+Example<Person> example = Example.of(person);
+
+1. Create a new instance of the domain object.
+2. Set the properties to query.
+3. Create the Example.
+
+```
+
+ReactiveCrudRepository와 CrudRepository의 차이는 Reactive는 페이징 안하고, 트랜잭션 동작을 허용하지 않는다.
+
+## 페이징 
+
+다음 페이지를 가져오려면 
+1. 전체 레코드 개수 조회
+2. 이전에 반환된 레코드 개수 알아야
+
+모두 논블로킹 패러다임에 적합하지 않는다. 다만 `Pageable` 객체를 전달해서 데이터 청크를 가져올 수는 있다.
+
+## ReactiveMongoRepository 세부 구현
+스프링 데이터 mongodb의 리액티브 모듈은 ReactiveMongoRepository 인터페이스 구현체가 `SimpleReactiveMongoRepository` 클래스 하나 뿐이다.
+`ReactiveMongoOperations` 인터페이스로 저수준 동작을 모두 구현한다.
+
+이 구현체의 findAllById(Publisher<ID> id) 메서드 구현을 보자.
+
+```java
+public Flux<T> findAllById(Publisher<ID> ids){
+    return Flux.from(ids).buffer().flatMap(this::findAllById);
+}
+```
+이 메서드는 buffer 함수로 모든 ID를 수집한 다음, 메서드의 findAllById(Iterable<ID> ids) 를 재정의해 하나의 요청으로 만든다.
+Flux.buffer() 하면 Flux<List<T>> 로 모아주는 역할을 하고,   
+
+`ReactiveMongoOperations` 의 find(Query query)를 사용해 조회하게 된다.
+
+그런데 일반적인 crudRepository의 효과적인 batch insert인 `insert(Iterable<S> entities)` 와 다르게,
+`insert(Publisher<S> entities)` 메서드는 `flatMap(entity -> mongoOperations.insert(entity,...))` 형식으로 되어있어서,
+DB호출이 굉장히 많아진다. 
+
+`crudRepository`처럼 `ReactiveCrudRepository`에 대한 구현체 생성이 런타임에 생성된다.
+`RepositoryFactorySupport` 클래스가 이 레포에 대한 구현체 프록시를 생성한다.
+
+
+## ReactiveMongoTemplate 사용하기
+
+`ReactiveMongoOperations` 를 직접 구현한 ReactiveMongoTemplate을 사용하면 Query 객체를 직접 생성해서 조작할 수 있다
+
+이 MongoTemplate 클래스는 DB에 대한 설정도 들어있고 ( 서버 url, port, DB 이름 등) 스프링 컨텍스트로 등록된다.
+
+설정한 MongoDB에 연결하기 위해서는 `ReactiveMongoDatabaseFactory` 클래스를 이용, 
+MongoDB의 결과물 `org.bson.Document`를 클래스로 매핑하거나 vice versa 는 `MongoConverter` 클래스의 역할.
+
+검색이 일어나는 방식은
+1. find(query) 하면 `query.Query` 클래스를 MongoDB 클라이언트의 input 포맷인 `org.bson.Document`로 매핑해준다.
+2. ReactiveMongoTemplate이 `org.bson.Document`로 데이터베이스 클라이언트 호출.
+3. `com.mongodb.reactivestreams.client.MongoClient` 몽고 클라이언트가 MongoDB 드라이버의 진입점이다. reactive Publisher로 데이터 반환해준다.
+
+
+## 리액티브 몽고DB 드라이버 사용하기
+ 
+ 스프링 데이터의 MongoDB 연결은 `mongoDB 리액티브 스트림 자바 드라이버`. 논블로킹 배압으로 비동기 스트림 처리 가능하게 해준다.
+리액티브 MongoDB 연결을 사용하면 배치 작업 크기에 따른 배압 요구를 사용한다. ( subscribe가 계속 유지되어 있다면, 추가로 request 보낸다.)
+다만, 작은 수요의 요청 사이즈 사용하면 네트워크 통신이 많이 필요해진다.
+
+## Cassandra 비동기 드라이버
+
+여기도 저수준은 `ReactiveCassandraOperations`, 이걸 구현한 `ReactiveCassandraTemplate` 클래스. 
+
+# 리액티브 트랜잭션
+
+트랜잭션은 트랜잭션 초기화 시점, 트랜잭션 객체랑 관련된 작업 진행 시점, 최종 결정(commit/rollback) 시점이 존재.
+
+동기식에서는 ThreadLocal에 트랜잭션 객체를 보관했었다. 우리는 리액터 컨텍스트를 활용한다.
+
+왜 명령형 프로그램에서 Transaction Management에 ThreadLocal이 필요했을까?
+
+Transaction management는 실행중에 transactional state가 계속 추적되야해. 그래서 `ThreadLocal`에 transactional state를 저장해두었다.
+그러니 Thread하나가 해당 Transactional state를 가지게 되었다. 
+
+```java
+public interface PlatformTransactionManager {
+
+    TransactionStatus getTransaction(
+            TransactionDefinition definition) throws TransactionException;
+
+    void commit(TransactionStatus status) throws TransactionException;
+
+    void rollback(TransactionStatus status) throws TransactionException;
+}
+```
+우리가 @Transactional을 달면 이 PlatformTransactionManger가 관여한다.
+
+트랜잭션의 시작과 종료지점, transaction의 종료시 commit인지 rollback인지 결정한다.
+
+getTransaction을 하면 TransactionStatus가 반환된다.
+
+이 `TransactionStatus`는 새로운 transaction을 나타낼 수도 있고,
+
+현재 call stack에 참여하는 transactionId와 맞는 transaction이 있다면 존재하는 TransactionStatus를 리턴해준다.
+
+`TransactionDefinition`은 
+- Isolation level
+- Propagation level : transaction context안에서 transaction 실행해야되는지 여부
+- Timeout : transaction이 timeout나서 rollback할때까지 얼마나 줄지
+- Read-only status: data 수정안하는 경우
+
+이런걸 담고있으니 commit과 rollback이 가능한 것이다.
+
+`@Transactional annotation`을 사용한다면 , 
+1. @Transactional 붙은 메서드 시작전에 DB connection을 얻어와 Autocommit = False를 한다 ( rollback 때문에 매 sql문 실행마다 커밋하면 안된다. )
+2. @Transactional 붙은 메서드내에서는 하나의 DB connection만 사용해서 sql문 실행
+3. 메서드 종료되면 Transaction commit하고, conection 실행
+
+이 commit할때
+```java
+@Override
+	protected void doCommit(DefaultTransactionStatus status) {
+		DataSourceTransactionObject txObject = (DataSourceTransactionObject) status.getTransaction();
+		Connection con = txObject.getConnectionHolder().getConnection();
+		if (status.isDebug()) {
+			logger.debug("Committing JDBC transaction on Connection [" + con + "]");
+		}
+		try {
+			con.commit();
+		}
+		catch (SQLException ex) {
+			throw translateException("JDBC commit", ex);
+		}
+	}
+```
+이런식으로 TransactionStatus가 쓰인다. 그런데 reactive에서는 이런 transactionStatus를 불러오는곳이 Context여야 한다는 것이지.
+
+### MongoDB 4의 리액티브 트랜잭션
+기존엔 document 내부의 다른 document 있어도 하나의 document에 대해서만 원자적 업데이트가 가능했다.
+다중 document transaction 사용하면 여러개 커밋 , 롤백가능하다. 
+
+이제 송금하는 함수에 대한 트랜잭션을 작성해보면
+
+```java
+import java.time.Duration;
+
+public class TransactionalWalletService implements WalletService {
+  private final ReactiveMongoTemplate mongoTemplate;
+
+  @Override
+  public Mono<TxResult> transferMoney(
+          Mono<String> fromOwner,
+          Mono<String> toOwner,
+          Mono<Integer> requestAmount
+  ) {
+    return Mono.zip(fromOwner, toOwner, requestAmount)
+               .flatMap(function((from, to, amount) -> {
+                 return doTransferMoney(from, to, amount)
+                         .retryBackOff(20, Duration.ofMillis(1), Duration.ofMillis(500),0.1)
+                         .onErrorReturn(TxResult.c);
+               }));
+  }
+  
+  private Mono<TxResult> doTransferMoney(String from, String to, Integer amount
+  ){
+      return mongoTemplate.inTransaction().execute(session ->
+        session.findOne(queryForOwner(from), Wallet.class)
+                .flatMap(fromWallet -> session
+                        .findOne(queryForOwner(to), Wallet.class)
+                        .flatMap(toWallet -> {
+                            if (fromWallet.hasEnoughFunds(amount)){
+                                fromWallet.withdraw(amount);
+                                toWallet.deposit(amount);
+                                return session.save(fromWallet)
+                                        .then(session.save(toWallet))
+                                        .then(Mono.just(TxResult.SUCCESS));
+                            } else{
+                                return Mono.just(TxResult.NOT_ENOUGH_FUNDS);
+                            }
+                        }))
+                .onErrorResume(e ->
+                    Mono.error(new RuntimeException("Conflict")).last()        
+                )                           
+      );
+  }
+}
+
+
+```
+근데 이러면 wallet하나 로드하고, wallet다음거 하나 로드하게 된다.
+
+List<Wallet> listOfWallet 을 두어 findWalletById(Iterable<Wallet> iterable)
+이런걸 사용해서 wallet을 동시에 받아오고, save도 비슷하게 iterable을 한다면 트랜잭션 충돌 비율을 감소시킬 수 있다.
+
+
+## SAGA 패턴을 이용한 분산 트랜잭션
+SAGA 패턴은 작은 task 성공하면 다음 task 시작. 어떤 연속적인 task라도 실패하면 맨 첫 task까지 롤백한다. 
+
+> 로컬 트랜잭션과 글로벌 트랜잭션의 차이?
+> 로컬 트랜잭션은 하나의 DB에만 접근가능, 글로벌 트랜잭션은 여러 DB 접근하는
+## MongoDB 리액티브 커넥터
+MongoDB 리포지토리는 QBE 지원, 메서드 명명규칙에 따른 쿼리 생성, 커서 사용 ( capped collection - 결과 다 내보내도 커넥션이 열려있어서, 새 도큐먼트가 들어오면 새 도큐먼트를 보낼 수 있다.)
+
+# RDB용 비동기 드라이버
+
+## ADBA(Asynchronous Database access)
+자바 플랫폼용 논블로킹 DB 엑세스 api - 네트워크 호출시 메서드 호출이 블로킹 되지 않는다. 
+
+## R2DBC(Reactive Relational Database Connectivity)
+https://docs.spring.io/spring-data/r2dbc/docs/current/reference/html/
+이제 나온듯?
+
+R2DBC 프로젝트 구성
+- R2DBC 서비스 제공자 인터페이스(SPI) 드라이버 구현을 위한 최소한의 API 정의. ( R2DBC사용하려면 여기 정의된 메서드들은 비동기 드라이버로 지원해줘야 한다.  )
+- R2DBC Client: 사용자 요청을 SPI의 input 형식으로 변환하는.
+
+>For most tasks, you should use R2dbcEntityTemplate or the repository support, which both use the rich mapping functionality. R2dbcEntityTemplate is the place to look for accessing functionality such as ad-hoc CRUD operations.
+
+```java
+public class R2dbcApp {
+
+  private static final Log log = LogFactory.getLog(R2dbcApp.class);
+
+  public static void main(String[] args) {
+
+    ConnectionFactory connectionFactory = ConnectionFactories.get("r2dbc:h2:mem:///test?options=DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE");
+
+    R2dbcEntityTemplate template = new R2dbcEntityTemplate(connectionFactory);
+
+    template.getDatabaseClient().sql("CREATE TABLE person" +
+        "(id VARCHAR(255) PRIMARY KEY," +
+        "name VARCHAR(255)," +
+        "age INT)")
+      .fetch()
+      .rowsUpdated()
+      .as(StepVerifier::create)
+      .expectNextCount(1)
+      .verifyComplete();
+
+    template.insert(Person.class)
+      .using(new Person("joe", "Joe", 34))
+      .as(StepVerifier::create)
+      .expectNextCount(1)
+      .verifyComplete();
+
+    template.select(Person.class)
+      .first()
+      .doOnNext(it -> log.info(it))
+      .as(StepVerifier::create)
+      .expectNextCount(1)
+      .verifyComplete();
+  }
+}
+```
+
+1. 우리가 원래 쓰는 커넥션 팩토리로 `R2dbcEntityTemplate` 얻어올 수 있다. 이걸로 DB 조회가능
+
+H2 (io.r2dbc:r2dbc-h2)
+MariaDB (org.mariadb:r2dbc-mariadb)
+Microsoft SQL Server (io.r2dbc:r2dbc-mssql)
+jasync-sql MySQL (com.github.jasync-sql:jasync-r2dbc-mysql)
+Postgres (io.r2dbc:r2dbc-postgresql)
+Oracle (com.oracle.database.r2dbc:oracle-r2dbc)
+
+이런 spi 드라이버들이 존재한다. template에 끼우면된다.
+```java
+Person person = new Person("John", "Doe");
+
+Mono<Person> saved = template.insert(person);
+Mono<Person> loaded = template.selectOne(query(where("firstname").is("John")),
+    Person.class);
+```
+
+이런식으로 조회하고, Mono로 받아오기가 가능하다. 
+
+
+```java
+Mono<Person> first = template.select(Person.class)  
+  .from("other_person")
+  .matching(query(where("firstname").is("John")     
+    .and("lastname").in("Doe", "White"))
+    .sort(by(desc("id"))))                          
+  .one();                                           
+
+Selecting from a table by name returns row results using the given domain type.
+The issued query declares a WHERE condition on firstname and lastname columns to filter results.
+Results can be ordered by individual column names, resulting in an ORDER BY clause.
+Selecting the one result fetches only a single row.
+  This way of consuming rows expects the query to return exactly a single result.
+Mono emits a IncorrectResultSizeDataAccessException if the query yields more than a single result.
+```
+
+```java
+@Autowired
+private TransactionalOperator operator;
+
+public Mono<Void> deposit(DepositRequest request){
+    return this.accountRepository.findById(request.getAccount())
+            .doOnNext(ac -> ac.setBalance(ac.getBalance() + request.getAmount()))
+            .flatMap(this.accountRepository::save)
+            .thenReturn(toEvent(request))
+            .flatMap(this.eventRepository::save)
+            .doOnError(System.out::println)
+            .as(operator::transactional) // add this
+            .then();
+}
+```
+transactional operator를 사용해서 transaction 안에 가둘수있다.
+
+# 동기식 레포지토리를 리액티브 스타일로 변경하기
+
+리액티브 커넥터 없는 DB는 리액티브 API로 매핑하면 되지만, publishOn이나 subscribeOn 등으로 다른 스레드로 실행시켜서 논블로킹하게 해야한다.
+하지만 적절한 스레드풀이 없다면 publishOn에 배정한 스케줄러로부터 스레드 받으려고 블로킹상태가 되어버릴 수도 있다.
+
+모든 블로킹 요청은 전용 스케줄러를 두어서 거기에서만 일어나게 해야 한다. 다만, DB 커넥션 풀 크기도 생각해야 한다. 스레드를 할당받았어도 DB 커넥션 풀 기다리느라 실행안될수도 있다.
+
+### rxjava2-jdbc 라이브러리
+전용 스레드 풀 + 논블로킹 커넥션 풀 - 커넥션 풀의 커넥션 기다리는게 논블로킹하게 일어난다.
+DB 커넥션 받아와야 블로킹 시작.
+
+### 동기식 CrudRepository 래핑
+
+JPA를 사용할땐 lazy loading을 막아야 해. 프록시 객체로 일부 변수를 가져오게 된다면 나중에 사용하려고 할 때 블로킹이 일어난다.
+
+원래의 CrudRepository를 `delegate`라는 변수로 하는 래핑 객체를 만들어서 이 문제를 풀어본다면
+
+```java
+
+public <S extends T> Mono<S> save(S entity){
+    return Mono.fromCallable(() -> delegate.save(entity).subscribeOn(scheduler)); // 다른 스케줄러에서 실행되도록 한다.
+}
+```
+
+이렇게 할때 스케줄러는 커넥션 풀 개수랑 동일하게 세팅해주는게 좋다. 커넥션 못받아서 놀고있는 스레드가 생기니까. 
+
+다만 이렇게 매핑 잘해도, deleteAll같은거 구현할때 주의해야 하는 것이, 우리의 flux가 5개의 item을 onNext로 내보낼거라서
+deleteAll(Flux) 로 했다고 치면, 5개가 5초씩 딜레이가 있다고 치면, deleteAll(Iterable<>) 을 사용하진 못한다.
+그러니 flux에서 event가 들어올때마다 delete를 호출해주는 방식으로 구현해야한다.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
