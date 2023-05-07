@@ -659,27 +659,589 @@ deleteAll(Flux) 로 했다고 치면, 5개가 5초씩 딜레이가 있다고 치
 
 
 
+```
+2023-05-01T21:19:48.757+09:00 ERROR 27018 --- [or-http-epoll-2] a.w.r.e.AbstractErrorWebExceptionHandler : [31c561f7-1]  500 Server Error for HTTP POST "/schedule"
+
+java.lang.IllegalStateException: Rejecting additional inbound receiver. State=[terminated=false, cancelled=false, pending=0, error=false]
+        at reactor.netty.channel.FluxReceive.startReceiver(FluxReceive.java:187) ~[reactor-netty-core-1.1.6.jar!/:1.1.6]
+        Suppressed: reactor.core.publisher.FluxOnAssembly$OnAssemblyException:
+Error has been observed at the following site(s):
+        *__checkpoint ⇢ HTTP POST "/schedule" [ExceptionHandlingWebHandler]
+Original Stack Trace:
+                at reactor.netty.channel.FluxReceive.startReceiver(FluxReceive.java:187) ~[reactor-netty-core-1.1.6.jar!/:1.1.6]
+                at reactor.netty.channel.FluxReceive.subscribe(FluxReceive.java:145) ~[reactor-netty-core-1.1.6.jar!/:1.1.6]
+                at reactor.core.publisher.InternalFluxOperator.subscribe(InternalFluxOperator.java:62) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.netty.ByteBufFlux.subscribe(ByteBufFlux.java:340) ~[reactor-netty-core-1.1.6.jar!/:1.1.6]
+                at reactor.core.publisher.InternalFluxOperator.subscribe(InternalFluxOperator.java:62) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.netty.ByteBufFlux.subscribe(ByteBufFlux.java:340) ~[reactor-netty-core-1.1.6.jar!/:1.1.6]
+                at reactor.core.publisher.InternalMonoOperator.subscribe(InternalMonoOperator.java:64) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(MonoFlatMap.java:165) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxOnErrorResume$ResumeSubscriber.onNext(FluxOnErrorResume.java:79) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxSwitchIfEmpty$SwitchIfEmptySubscriber.onNext(FluxSwitchIfEmpty.java:74) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.MonoNext$NextSubscriber.onNext(MonoNext.java:82) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.innerNext(FluxConcatMapNoPrefetch.java:258) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMap$ConcatMapInner.onNext(FluxConcatMap.java:863) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxMap$MapSubscriber.onNext(FluxMap.java:122) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxPeek$PeekSubscriber.onNext(FluxPeek.java:200) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.MonoNext$NextSubscriber.onNext(MonoNext.java:82) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.innerNext(FluxConcatMapNoPrefetch.java:258) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMap$ConcatMapInner.onNext(FluxConcatMap.java:863) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMap$WeakScalarSubscription.request(FluxConcatMap.java:479) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.Operators$MultiSubscriptionSubscriber.request(Operators.java:2305) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxConcatMapNoPrefetch$FluxConcatMapNoPrefetchSubscriber.request(FluxConcatMapNoPrefetch.java:338) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.MonoNext$NextSubscriber.request(MonoNext.java:108) ~[reactor-core-3.5.5.jar!/:3.5.5]
+                at reactor.core.publisher.FluxPeek$PeekSubscriber.request(FluxPeek.java:138) ~[reactor-core-3.5.5.jar!/:3.5.5]
+```
+
+이런걸 보고 어떻게 디버깅을 하겠나.
+
+내가 실수를 저지른 것 중 하나가
+
+```java
+public Mono<ServerResponse> scheduleMessage(ServerRequest request){
+        System.out.println("hello world2");
+        Mono<MultiValueMap<String, String>> formData = request.formData();
+        
+        formData.subscribe(e-> System.out::println);
+        return ServerResponse.ok().bodyValue("Ok");
+```
+이렇게 한 거였는데, 이러면 {} 만 프린트 된다.
+알고보니,
+https://stackoverflow.com/questions/72555832/body-in-serverrequest-is-null-with-serverrequestspring-webflux
+
+runtime에는 debug모드가 아니면 왜 오류나는지 안보이고,
+subscribe가 async이기 때문에, 내 코드는 저 쓰레드에서 이미 OK를 내보낼때까지 출력을 못하고 끝나버린다. 
+그러니까, subscribe 자체가 다른 스레드에서 실행되도록 되어있는것.
+
+무조건 return할때 
+```java
+public Mono<ServerResponse> scheduleMessage(ServerRequest request){
+        System.out.println("hello world2");
+        Mono<MultiValueMap<String, String>> formData = request.formData();
+        Mono<ScheduledMessage> message = userRequestParseService.parseMap2ScheduledMessage(formData);
 
 
+        return request.bodyToMono(String.class)
+                .doOnNext(System.out::println)
+                .flatMap(body -> ServerResponse.ok()
+                        .bodyValue("ok"));
+    }
+```
+
+이런거 해야지만 결과를 볼 수 있다.
 
 
+```java
+   public Mono<ServerResponse> scheduleMessage(ServerRequest request) {
+        System.out.println("hello world2");
+        Mono<MultiValueMap<String, String>> formData = request.formData();
+        Mono<ScheduledMessage> scheduledMessage = userRequestParseService.parseMap2ScheduledMessage(formData);
+        Mono<ResponseModel> successResponse = scheduledMessage
+                .flatMap(message -> Mono.just(new ResponseModel(onlyVisibleToSender, message)))
+                .doOnNext(System.out::println);
+
+        return scheduledMessage
+                .doOnNext(System.out::println)
+                .flatMap(message -> ServerResponse
+                        .ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(successResponse, ResponseModel.class));
+```
+이런식으로 하면 ResponseModel이라는게 @getter가 있어서 json으로 바꿀수있다면 json응답을 받을 수 있다.
 
 
+그리고 또 재밌는건 reactiveMongoRepository에 save를 호출했는데도 저장이 안된다. 
+구독할때까지 아무일이 안 일어난다는게 중요하다.
 
 
+https://stackoverflow.com/questions/57070561/reactivemongorepository-not-saving-my-data
 
 
+```java
+    public Mono<ServerResponse> scheduleMessage(ServerRequest request) {
+        System.out.println("hello world2");
+        Mono<MultiValueMap<String, String>> formData = request.formData();
+        Mono<ScheduledMessage> scheduledMessage = userRequestParseService.parseMap2ScheduledMessage(formData);
+        Mono<ResponseModel> successResponse = scheduleMessageService
+                                                    .saveMessage(scheduledMessage)
+                                                    .flatMap(message -> Mono.just(new ResponseModel(onlyVisibleToSender, message)));
+
+        return scheduledMessage
+                .doOnNext(System.out::println)
+                .flatMap(message -> ServerResponse
+                        .ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(successResponse, ResponseModel.class));
+```
+
+이런코드를 효율화해보니
+
+```java
+public Mono<ServerResponse> scheduleMessage(ServerRequest request) {
+        System.out.println("hello world2");
+        Mono<MultiValueMap<String, String>> formData = request.formData();
+        return userRequestParseService
+                .parseMap2ScheduledMessage(formData)
+                .flatMap(scheduleMessageService::saveMessage)
+                .doOnNext(System.out::println)
+                .flatMap(message -> {
+                    var successResponse = Mono.just(new ResponseModel(onlyVisibleToSender, message));
+
+                    return ServerResponse
+                            .ok()
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(successResponse, ResponseModel.class);
+                });
+```
+이런식으로 되어서 놀랍다.
 
 
+# 질문: Mono<ServerResponse> 를 반환하면 subscribe는 누가하냐. 저거 봐도 mono 생성만 하고 subscribe는 안하는데?
+
+handler를 정의해서 
+```java
+    @Bean
+    public RouterFunction<ServerResponse> mainRouter(ScheduleHandler scheduleHandler){
+        return RouterFunctions.route()
+                .GET("/", scheduleHandler::healthCheck)
+                .POST("/schedule", scheduleHandler::scheduleMessage)
+                .build();
+    }
+```
+이런식으로 RouterFunction<ServerResponse>을 반환하는 Router를 정의했었는데, HTTP 서버 (Tomcat, undertow, Netty) 들은
+
+`RouterFunctions.toHttpHandler(RouterFunction)` 을 한 HttpHandler를 받게 된다. 
+
+이 HttpHandler는 adapter에 붙이면 되고, adapter은 HTTP 서버 specific 하다. 
+
+서버에 따라 등록방법이 조금씩 다른데, netty의 경우 아래와 같다.
+
+```java
+HttpHandler handler = ...
+ReactorHttpHandlerAdapter adapter = new ReactorHttpHandlerAdapter(handler);
+HttpServer.create().host(host).port(port).handle(adapter).bind().block();
+```
+
+스프링 부트에서 사용하는 방식은, RouterFunction<ServerResponse> 컴포넌트를 빈으로 등록해두고, DispatcherHandler와 함께 사용한다.
+
+스프링은 HandlerFunctionAdapter를 두어서, DispatcherHandler가 이 Adapter를 갖고 있게 함으로써, request가 왔을때 어떻게 처리할지 정의.
+
+ServerResponseHandler는 ServerResponse의 writeTo 메소드를 불러서 HandlerFunction의 결과를 처리한다.
+
+https://godekdls.github.io/Reactive%20Spring/springwebflux/#13-dispatcherhandler
+
+DispatcherHandler 에서 HandlerFunctionAdapter 불러서 실행을 완료하면 실행 결과랑 컨텍스트 정보를 감싼 `HandlerResult`를 반환한다.
+이 HandlerResult는 `HandlerResultHandler`가 처리하는데,
+
+`ResponseEntityResultHandler`- ResponseEntity 리턴 - @Controller에서 보통 반환 (클래스를 반환한다던지)
+`ServerResponseResultHandler`- ServerResponse 리턴 - 함수형엔드포인트에서 보통 반환
+`ResponseBodyResultHandler` - @ResponseBody 메서드(json으로 나갈때 쓰는거), @RestController에서 리턴한 값 처리
+`ViewResolutionResultHandler` - CharSequence, View, Model, Map, Rendering이나 다른 Object를 model attribute로 처리. 
+
+ServerResponseResultHandler 는 뭘 할까?
+
+WebFluxAutoConfiguration이 우리의 ServerResponseResultHandler를 설정할것이다.
+
+얘는 EnableSpringBootApplication에 들어있을 것이다. 
+
+```java
+public class WebFluxConfigurationSupport implements ApplicationContextAware {
+[출처] Spring Webflux CodecConfigurer의 내부 속으로 - 2 고급편 (HTTP message readers and writers 동작 원리)|작성자 호식이
+
+```
+여기 있다.
+![img_1.png](img_1.png)
+
+여기의 ServerResponseResultHandler를 보자. ( ResponseEntityResultHandler랑 ResponseBodyResultHandler 도 여기있다.)
+
+```java
+  @Bean
+	public ServerResponseResultHandler serverResponseResultHandler(
+			ServerCodecConfigurer serverCodecConfigurer) {
+		List<ViewResolver> resolvers = getViewResolverRegistry().getViewResolvers();
+		ServerResponseResultHandler handler = new ServerResponseResultHandler();
+		handler.setMessageWriters(serverCodecConfigurer.getWriters());
+		handler.setViewResolvers(resolvers);
+		return handler;
+	}
+[출처] Spring Webflux CodecConfigurer의 내부 속으로 - 2 고급편 (HTTP message readers and writers 동작 원리)|작성자 호식이
 
 
+```
+
+책에서 봤듯이 Mono<String>으로 반환하더라도, viewResolver가 받아서 사용할 수 있다. 그래서 viewResolver들을 등록해놔야 하고.
+
+messageWriter가 우리의 메시지를 처리하는 듯 하다. 
+
+```java
+public class ServerResponseResultHandler implements HandlerResultHandler, InitializingBean, Ordered {
+	@Override
+	public Mono<Void> handleResult(ServerWebExchange exchange, HandlerResult result) {
+		ServerResponse response = (ServerResponse) result.getReturnValue();
+		Assert.state(response != null, "No ServerResponse");
+		return response.writeTo(exchange, new ServerResponse.Context() {
+			@Override
+			public List<HttpMessageWriter<?>> messageWriters() {
+				return messageWriters;
+			}
+			@Override
+			public List<ViewResolver> viewResolvers() {
+				return viewResolvers;
+			}
+		});
+	}
+
+}
+```
+ServerWebExchange 는 이렇게 3개가 존재한다.
+```java
+interface ServerWebExchange {
+  ServerHttpRequest getRequest();
+
+  ServerHttpResponse getResponse();
+
+  Mono<WebSession> getSession();
+}
+```
+
+```java
+interface ServerHttpRequest{
+    Flux<DataBuffer> getBody();
+}
+interface ServerHttpResponse{
+  Mono<Void> writeWith(Publisher<? extends DataBuffer> body);
+}
+```
+
+즉 얘가 처음 요청을 받는애고, 요청을 되돌려주는 역할을 한다.
+ServerHttpResponse의 return 타입이 Mono<Void>인것만 봐도 알 수 있듯이, 이 Mono<Void>를 구독하는 경우에만 데이터를 보내는 프로세스가 실행된다.
+
+다시 `ServerResponseResultHandler`의 `handleResult` 로 돌아가서, response.writeTo(ServerWebExchange, new ServerResponse.Context())
+writeTo를 실행하는데, ServerResponse의 종류가 다양해서 각각 맞는 클래스가 있다.
+
+우리가 자주 사용하는 ServerResponse.body(BodyInserters) 는 `private static final class BodyInserterResponse<T> extends AbstractServerResponse`
+형태이다.
+
+```java
+abstract static class AbstractServerResponse implements ServerResponse {
+
+	@Override
+    public final Mono<Void> writeTo(ServerWebExchange exchange, Context context) {
+		writeStatusAndHeaders(exchange.getResponse());
+		Instant lastModified = Instant.ofEpochMilli(headers().getLastModified());
+		HttpMethod httpMethod = exchange.getRequest().getMethod();
+		if (SAFE_METHODS.contains(httpMethod) && exchange.checkNotModified(headers().getETag(), lastModified)) {
+			return exchange.getResponse().setComplete();
+		}
+		else {
+			return writeToInternal(exchange, context);
+		}
+	}
+}
+```
+
+```java
+private static final class BodyInserterResponse<T> extends AbstractServerResponse {
+        @Override
+		protected Mono<Void> writeToInternal(ServerWebExchange exchange, Context context) {
+			return this.inserter.insert(exchange.getResponse(), new BodyInserter.Context() {
+				@Override
+				public List<HttpMessageWriter<?>> messageWriters() {
+					return context.messageWriters();
+				}
+				@Override
+				public Optional<ServerHttpRequest> serverRequest() {
+					return Optional.of(exchange.getRequest());
+				}
+				@Override
+				public Map<String, Object> hints() {
+					hints.put(Hints.LOG_PREFIX_HINT, exchange.getLogPrefix());
+					return hints;
+				}
+			});
+		}
+}
+```
+
+this.inserter이 BodyInserter 클래스인데
+```java
+  public Mono<ServerResponse> hello(ServerRequest request) {
+    return ServerResponse.ok().contentType(MediaType.TEXT_PLAIN)
+            .body(BodyInserters.fromValue("Hello, Spring!"));
+  }
+[출처] Spring Webflux CodecConfigurer의 내부 속으로 - 2 고급편 (HTTP message readers and writers 동작 원리)|작성자 호식이
+```
+이런 body를 만들때 body에 `bodyInserters` 를 사용해서 메시지를 갖고 있는 `BodyInserter`를 리턴받는다. 즉, `BodyInserter`클래스를 생성한다.
+
+그 body inserter는 이런 람다식이다. (BodyInserter#Insert 메서드인) `Mono<Void> insert(M outputMessage, Context context);` 이게 writeWithMessageWriters를 return하도록 선언된것.
+
+```java
+(message, context) ->
+            writeWithMessageWriters(message, context, publisher, ResolvableType.forClass(elementClass), null);
+```
+
+즉, insert함수에 message랑 context를 제공하면, writeWithMessageWriters를 호출한다.
 
 
+ServerWebExchange가 가지고 있는 비어있는 `exchange.getResponse()` 에 BodyInserter가 갖고있는 정보를 넣게 된다. (insert 메서드) 
+
+(사실 비어있는건 아니고, `AbstractServerResponse#writeTo` 때문에 `writeStatusAndHeaders(exchange.getResponse())`는 실행된 상태)
+
+이를통해 `ReactiveHttpOutputMessage` body를 채우게 된다.  
+
+```java
+ .body(BodyInserters.fromPublisher(
+                    scheduledMessageMono, ScheduledMessage.class
+                ))
+```
+
+```java
+public abstract class BodyInserters {
+  public static <T, P extends Publisher<T>> BodyInserter<P, ReactiveHttpOutputMessage> fromPublisher(P publisher, Class<T> elementClass) {
+
+    Assert.notNull(publisher, "'publisher' must not be null");
+    Assert.notNull(elementClass, "'elementClass' must not be null");
+    return (message, context) ->
+            writeWithMessageWriters(message, context, publisher, ResolvableType.forClass(elementClass), null);
+  }
+  private static <M extends ReactiveHttpOutputMessage> Mono<Void> writeWithMessageWriters(
+          M outputMessage, BodyInserter.Context context, Object body, ResolvableType bodyType, @Nullable ReactiveAdapter adapter) {
+
+    Publisher<?> publisher;
+    if (body instanceof Publisher<?> publisherBody) {
+      publisher = publisherBody;
+    }
+    else if (adapter != null) {
+      publisher = adapter.toPublisher(body);
+    }
+    else {
+      publisher = Mono.just(body);
+    }
+    MediaType mediaType = outputMessage.getHeaders().getContentType();
+    for (HttpMessageWriter<?> messageWriter : context.messageWriters()) {
+      if (messageWriter.canWrite(bodyType, mediaType)) {
+        HttpMessageWriter<Object> typedMessageWriter = cast(messageWriter);
+        return write(publisher, bodyType, mediaType, outputMessage, context, typedMessageWriter);
+      }
+    }
+    return Mono.error(unsupportedError(bodyType, context, mediaType));
+  }
+}
+```
+
+1. `Dispatcherhandler` 에서 요청을 받으면 `HandlerFunctionAdapter`로 넘겨서 걸맞는 `RouterFunction<ServerResponse>`을 실행시킨다.
+
+2. `HandlerFunctionAdapter`은 저 `RouterFunction<ServerResponse>` 의 결과로 `HandlerResult`를 반환하고,
+
+3. `HandlerResultHandler`로 `HandlerResult`를 처리한다.
+우리는 `ServerResponseResultHandler`- ServerResponse 리턴 - 함수형엔드포인트에서 보통 반환
+
+3.1 `ServerResponseResultHandler`는 `ServerWebExchange` 와 `HandlerResult`를 받아서 `ServerWebExchange`안의 비어있는 `ServerResponse#writeTo`를 호출한다.
+
+우리가 사용하는 ServerResponse.body(BodyInserter) 에서 writeTo는 
+
+3.1.1 writeStatusAndHeaders로 ServerResponse를 채우고
+
+3.1.2 BodyInserter.insert 메서드를 호출해서 `BodyInserters#*` 함수에서 얻어지는 body를 채우는 함수들을 실행시킨다.
+
+3.1.3 그럼 이 결과는 Mono<Void>로 나오게 되고, 
+
+즉, 우리가 handler에서 Mono<ServerResponse>를 보낼때 bodyInserters.fromxxx() 로 bodyInserter를 넣어서 만든다.
+
+HttpMessageWriter.write(... , serverRequest, serverResponse, ...) (요청 보낸 사람정보랑, 보내야할 요청 인스턴스를 넣어주면)
+
+하나의 writer인 EncoderHttpMessageWriter를 보면, 결국 메시지 안에 잘 넣어준다 느낌이다.
+```java
+public class EncoderHttpMessageWriter<T> implements HttpMessageWriter<T> {
+  @Override
+  public Mono<Void> write(Publisher<? extends T> inputStream,
+                          ResolvableType elementType,
+                          @Nullable MediaType mediaType,
+                          ReactiveHttpOutputMessage message,
+                          Map<String, Object> hints) {
+
+    MediaType contentType = updateContentType(message, mediaType);
+
+    Flux<DataBuffer> body = this.encoder.encode(
+            inputStream, message.bufferFactory(), elementType, contentType, hints);
+
+    if (inputStream instanceof Mono) {
+      return body
+              .singleOrEmpty()
+              .switchIfEmpty(Mono.defer(() -> {
+                message.getHeaders().setContentLength(0);
+                return message.setComplete().then(Mono.empty());
+              }))
+              .flatMap(buffer -> {
+                Hints.touchDataBuffer(buffer, hints, logger);
+                message.getHeaders().setContentLength(buffer.readableByteCount());
+                return message.writeWith(Mono.just(buffer)
+                                             .doOnDiscard(DataBuffer.class, DataBufferUtils::release));
+              })
+              .doOnDiscard(DataBuffer.class, DataBufferUtils::release);
+    }
+
+    if (isStreamingMediaType(contentType)) {
+      return message.writeAndFlushWith(body.map(buffer -> {
+        Hints.touchDataBuffer(buffer, hints, logger);
+        return Mono.just(buffer).doOnDiscard(DataBuffer.class, DataBufferUtils::release);
+      }));
+    }
+
+    if (logger.isDebugEnabled()) {
+      body = body.doOnNext(buffer -> Hints.touchDataBuffer(buffer, hints, logger));
+    }
+    return message.writeWith(body);
+  }
+}
+```
+
+4. HandlerFunctionAdapter에서 등록했던 `handlerFunction` 에 의해 Mono<ServerResponse>가 오면, 이걸 매핑해서 새 Mono<HandlerResult>로 나오게 한건데,
+이걸,  HandlerResultHandler 가 처리해서 (ServerResponseResultHandler#handleResult) Mono<Void>를 반환하기 때문에,
+
+dispatcher handler가 
+
+```java
+public class HandlerFunctionAdapter implements HandlerAdapter {
+
+	private static final MethodParameter HANDLER_FUNCTION_RETURN_TYPE;
+
+	static {
+		try {
+			Method method = HandlerFunction.class.getMethod("handle", ServerRequest.class);
+			HANDLER_FUNCTION_RETURN_TYPE = new MethodParameter(method, -1);
+		}
+		catch (NoSuchMethodException ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
 
 
+	@Override
+	public boolean supports(Object handler) {
+		return handler instanceof HandlerFunction;
+	}
+
+	@Override
+	public Mono<HandlerResult> handle(ServerWebExchange exchange, Object handler) {
+		HandlerFunction<?> handlerFunction = (HandlerFunction<?>) handler;
+		ServerRequest request = exchange.getRequiredAttribute(RouterFunctions.REQUEST_ATTRIBUTE);
+		return handlerFunction.handle(request)
+				.map(response -> new HandlerResult(handlerFunction, response, HANDLER_FUNCTION_RETURN_TYPE));
+	}
+}
+```
+
+이걸 부르는건 dispatcher handler인데, 여기도 결국 이 결과를 받는것이다.  
+
+```java
+public class DispatcherHandler implements WebHandler, PreFlightRequestHandler, ApplicationContextAware {
+    
+  @Override
+  public Mono<Void> handle(ServerWebExchange exchange) {
+    if (this.handlerMappings == null) {
+      return createNotFoundError();
+    }
+    if (CorsUtils.isPreFlightRequest(exchange.getRequest())) {
+      return handlePreFlight(exchange);
+    }
+    return Flux.fromIterable(this.handlerMappings)
+               .concatMap(mapping -> mapping.getHandler(exchange))
+               .next()
+               .switchIfEmpty(createNotFoundError())
+               .onErrorResume(ex -> handleDispatchError(exchange, ex))
+               .flatMap(handler -> handleRequestWith(exchange, handler));
+  }
+  
+  private Mono<Void> handleRequestWith(ServerWebExchange exchange, Object handler) {
+    if (ObjectUtils.nullSafeEquals(exchange.getResponse().getStatusCode(), HttpStatus.FORBIDDEN)) {
+      return Mono.empty();  // CORS rejection
+    }
+    if (this.handlerAdapters != null) {
+      for (HandlerAdapter adapter : this.handlerAdapters) {
+        if (adapter.supports(handler)) {
+          return adapter.handle(exchange, handler)
+                        .flatMap(result -> handleResult(exchange, result));
+        }
+      }
+    }
+    return Mono.error(new IllegalStateException("No HandlerAdapter: " + handler));
+  }
+
+  private Mono<Void> handleResult(ServerWebExchange exchange, HandlerResult result) {
+    Mono<Void> resultMono = doHandleResult(exchange, result, "Handler " + result.getHandler());
+    if (result.getExceptionHandler() != null) {
+      resultMono = resultMono.onErrorResume(ex ->
+                                                    result.getExceptionHandler().handleError(exchange, ex).flatMap(result2 ->
+                                                                                                                           doHandleResult(exchange, result2, "Exception handler " +
+                                                                                                                                                             result2.getHandler() + ", error=\"" + ex.getMessage() + "\"")));
+    }
+    return resultMono;
+  }
+}
+```
+
+usage를 찾아가보니 아마도, HttpHandler가 dispatcher를 호출한다. 그리고 이보다 윗단은 Netty같은 HTTP 서버 엔진인데, 
+ReactorHttpHandlerAdapter 가 이 httpHandler들고 있으니까, 
+```java
+public class HttpWebHandlerAdapter extends WebHandlerDecorator implements HttpHandler {
+  @Override
+  public Mono<Void> handle(ServerHttpRequest request, ServerHttpResponse response) {
+    if (this.forwardedHeaderTransformer != null) {
+      try {
+        request = this.forwardedHeaderTransformer.apply(request);
+      }
+      catch (Throwable ex) {
+        if (logger.isDebugEnabled()) {
+          logger.debug("Failed to apply forwarded headers to " + formatRequest(request), ex);
+        }
+        response.setStatusCode(HttpStatus.BAD_REQUEST);
+        return response.setComplete();
+      }
+    }
+    ServerWebExchange exchange = createExchange(request, response);
+
+    LogFormatUtils.traceDebug(logger, traceOn ->
+            exchange.getLogPrefix() + formatRequest(exchange.getRequest()) +
+            (traceOn ? ", headers=" + formatHeaders(exchange.getRequest().getHeaders()) : ""));
+
+    return getDelegate().handle(exchange)
+                        .doOnSuccess(aVoid -> logResponse(exchange))
+                        .onErrorResume(ex -> handleUnresolvedError(exchange, ex))
+                        .then(cleanupMultipart(exchange))
+                        .then(Mono.defer(response::setComplete));
+  }
+}
+```
 
 
+```java
+public class ReactorHttpHandlerAdapter implements BiFunction<HttpServerRequest, HttpServerResponse, Mono<Void>> {
 
+  @Override
+  public Mono<Void> apply(HttpServerRequest reactorRequest, HttpServerResponse reactorResponse) {
+    NettyDataBufferFactory bufferFactory = new NettyDataBufferFactory(reactorResponse.alloc());
+    try {
+      ReactorServerHttpRequest request = new ReactorServerHttpRequest(reactorRequest, bufferFactory);
+      ServerHttpResponse response = new ReactorServerHttpResponse(reactorResponse, bufferFactory);
 
+      if (request.getMethod() == HttpMethod.HEAD) {
+        response = new HttpHeadResponseDecorator(response);
+      }
 
+      return this.httpHandler.handle(request, response)
+                             .doOnError(ex -> logger.trace(request.getLogPrefix() + "Failed to complete: " + ex.getMessage()))
+                             .doOnSuccess(aVoid -> logger.trace(request.getLogPrefix() + "Handling completed"));
+    } catch (URISyntaxException ex) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("Failed to get request URI: " + ex.getMessage());
+      }
+      reactorResponse.status(HttpResponseStatus.BAD_REQUEST);
+      return Mono.empty();
+    }
+  }
+}
+```
 
+흠, 그러면 이건 누가부르나. 결국 netty 서버 코드 https://stackoverflow.com/questions/74880928/content-type-application-json-not-supported-for-bodytype-when-using-native-ima
+에러나고서 스택을보라.
