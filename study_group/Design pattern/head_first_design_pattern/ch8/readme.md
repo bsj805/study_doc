@@ -99,14 +99,14 @@ public abstract class CaffeineBeverage() {
 
 3.2 CaffeineBeverage를 상속받되, brew()를 prepare에서 호출한 것이 아니라면 주문이 잘못들어온거니까, <br/>
 (`StackTraceElement[] stackTraceElements = Thread.currentThread().getStackTrace()` 으로 호출메서드 파악) <br/>
-Coffee 객체를 생성해서 Coffee.prepare()을 불러 커피를 반환해준다. 
+Coffee 객체를 생성해서 Coffee.prepare()을 불러 커피를 반환해준다.
 
 <details>
 <summary> 3.2정답: </summary>
 - 디미테르 법칙 위반한거 빼고는 문제가 있을까?  <br/>
 </details>
 
-3.3 prepare()메서드 자체를 오버라이드 해서 pourInCup() 만 사용하게 한다. 
+3.3 prepare()메서드 자체를 오버라이드 해서 pourInCup() 만 사용하게 한다.
 
 <details>
 <summary> 3.3정답: </summary>
