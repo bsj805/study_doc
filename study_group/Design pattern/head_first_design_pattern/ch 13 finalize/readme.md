@@ -69,7 +69,7 @@ public class LengthValidityConditionChecker extends ConditionDecorator{ // Condi
 </details>
 
 
-5. 패턴 카테고리의 용도가 뭔가?
+5. 패턴 카탈로그의 용도가 뭔가?
 
 <details>
 <summary> 정답: </summary>
