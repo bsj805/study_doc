@@ -12,7 +12,7 @@
 <details>
 <summary> 정답 </summary>
 
-![img.png](img.png)
+![img.png](../../../../../spring-study/Clean-Architecture/22,23,24,25,26,27/img.png)
 - UI, DB, 프레임워크 독립성
 - 육각형 아키텍쳐는 그중에서도 특정 adapter가 usecase 사용을 위한 포트(인터페이스)를 사용하는 방식이다.
   - 입력이 들어오는 Controller가 어댑터가 되고, 특정 usecase 호출하는 포트(라고는 하지만 그냥 인터페이스 함수)를 사용한다.
@@ -24,7 +24,7 @@
 
 
 
-![img_1.png](img_1.png)
+![img_1.png](../../../../../spring-study/Clean-Architecture/22,23,24,25,26,27/img_1.png)
 
 # 2. 컨트롤러에서 사용자가 원하는 데이터를 담아서 리턴하려고 DTO를 만들었다. 마침 UI에서도 같은 데이터를 사용하면 좋을 것 같아서 해당 DTO의 요소들을 렌더링하도록 했다. 무엇이 문제일까?
 

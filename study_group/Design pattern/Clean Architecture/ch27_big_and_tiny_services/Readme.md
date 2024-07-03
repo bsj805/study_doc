@@ -1,7 +1,9 @@
 # 27. 크고 작은 모든 서비스들
 
 
-# 1. 택시 서비스가 야옹이 운반서비스를 하려니 모든 서비스를 바꿔야 했던 이유는? 
+# 1. 기능단위로 분할한 마이크로서비스 기반 택시 서비스가 야옹이 운반서비스를 하려니 모든 서비스를 바꿔야 했던 이유는?
+
+택시 UI, TaxiFinder, Taxi Supplier, Taxi Selector, Taxi Dispatcher
 
 <details>
 <summary> 정답 </summary>
