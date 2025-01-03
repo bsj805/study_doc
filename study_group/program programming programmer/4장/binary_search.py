@@ -8,7 +8,6 @@ def binary_search(target, data):
         mid = (start + end) // 2 # 중간값
 
         if data[mid] == target:
-
             return mid 		# target 위치 반환
 
         elif data[mid] > target: # target이 작으면 왼쪽을 더 탐색

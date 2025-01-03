@@ -4,6 +4,7 @@ DAYS_PER_MONTH = [None, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 def check_number_of_days_given_month_day(month1, day1, month2, day2):
     assert(month1 <= month2) # 편의상 이런 제한조건 건다.
+
     if month1 < month2:
         current_month_remaining_day = DAYS_PER_MONTH[month1]-day1
     else:
