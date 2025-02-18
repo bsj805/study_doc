@@ -96,6 +96,8 @@ if __name__ == '__main__':
     val = zero_subarray_sum([1,-4,-2,5])
 
     cum=[1,-3,-5]
+
+    #-------------------최소 차이 찾는 알고리즘
     cum_indices = sorted((value, index) for index, value in enumerate(cum))
 
     # 최소 차이 찾기
@@ -106,3 +108,8 @@ if __name__ == '__main__':
         if diff < min_diff:
             min_diff = diff
             best_l, best_u = sorted([cum_indices[i][1], cum_indices[i - 1][1]])
+
+
+    #-------------------
+
+

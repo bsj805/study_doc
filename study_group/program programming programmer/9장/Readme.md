@@ -123,3 +123,88 @@ max를 함수로 구현했을 때 n=10,000인 벡터에서 최대값을 구하�
 처음에는 2군데만 생기고, 그다음엔 4군데에서 계산되야하고 ...
 
 </details>
+
+# 7. 
+
+매우 긴 연속된 바이트 (10억개, 1조개)가 주어졌을 때 어떻게 1로 설정된 비트의 총 개수를 효율적으로 셀 수 있겠는가? 
+
+(전체 바이트에서 얼마나 많은 비트가 1로 되어있는가?)
+
+<details>
+
+`char arr[1000000000000];` 가 있다고 쳐보자. 
+
+환경에 제약이 없다면, mapper와 reducer로 나눠서, hadoop map reduce로 word count를 수행할 것.
+
+mapper: 현재 주어진 원소의 1개수를 리턴
+
+reducer: 합산
+
+반복횟수를 줄여야 하니까, long 배열(8바이트)로 변환하면 1/8만큼 반복횟수가 줄어들 것. 각 숫자별로 1이 몇개인지 룩업 테이블을 static하게 heap 메모리에 생성해두면 빠를듯.
+
+-----------------
+
+정답
+
+1. 각 입력 단위 (8비트 문자 또는 32비트 정수)에서 1인 비트의 개수를 세고, 그를 합해보는 것이다. 
+
+16비트에서 1인 비트의 개수는 각 비트를 순서대로 보거나, 1인 비트에 대해서 반복하거나 (b &= (b-1) ),
+
+또는 2^16 개로 이뤄진 테이블을 검색해서 찾을 수 있다. 캐시의 크기가 여러분의 단위 선택에 어떤 영향을 끼치겠는가?? 
+
+- 생각해보니 8바이트짜리 long 사용하면 캐시미스가 잦을듯하다. 
+
+![img.png](img.png)
+
+
+
+</details>
+
+
+# 10. 
+
+D.B.Lomet는 1000개의 정수를 탐색하는 문제에서 해싱이 튜닝된 이진 탐색보다 빠를 것이라고 했다. 
+
+빠른 해싱 프로그램을 구현하고, 이를 튜닝된 이진 탐색 프로그램과 속도, 메모리 사용량 측면에서 비교해보라.
+
+
+<details>
+
+파이썬의 해싱함수는 linear probing을 통해서 해시값 겹치면 순차적으로 빈공간 찾는 방식을 선택한다.
+
+D.B.Lomet 씨는 논문에서는 해싱(Hashing)이 튜닝된 이진 탐색보다 빠를 수 있다고 주장했는데, 이를 검증하려면 고속 해싱 기법을 사용해야 합니다.
+
+고속 해싱이란 무조건 전체 데이터셋보다 큰 크기로 배열을 잡아두고, 무조건 O(1)에 접근할 수 있도록 하는것.
+
+
+```
+🔹 Number of Searches: 100
+🟢 Binary Search Time: 1.75 μs per search
+🔵 Hashed Search Time: 0.97 μs per search
+⚡ Speedup (Hash vs Binary): 1.81x
+
+🔹 Number of Searches: 500
+🟢 Binary Search Time: 1.63 μs per search
+🔵 Hashed Search Time: 0.29 μs per search
+⚡ Speedup (Hash vs Binary): 5.59x
+
+🔹 Number of Searches: 1000
+🟢 Binary Search Time: 1.45 μs per search
+🔵 Hashed Search Time: 0.17 μs per search
+⚡ Speedup (Hash vs Binary): 8.61x
+```
+
+hash dict 만드는 비용이 있어서 search 개수가 많아질수록 search당 비용이 싸지는 현상이 발생함.  
+
+
+| 구분 | 속도 | 메모리 사용량 |
+| -- | -- | -- | 
+| 튜닝된 이진탐색 | c*O(10) | O(1) |
+| 해싱 | O(N) + c*O(1) | O(N) | 
+
+여기서 c는 탐색횟수. 
+
+튜닝된 이진탐색은 최악의 경우 10번 탐색하는데, 따라서 탐색횟수가 많아질수록 해싱이 효율적
+
+</details>
+
