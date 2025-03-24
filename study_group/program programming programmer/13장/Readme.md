@@ -196,7 +196,7 @@ random.sample()은 내부적으로 Fisher-Yates Shuffle을 사용해 O(n) 에 �
 
 sorted() 함수를 사용하면 O(nlogn)에 끝난다고 한다.
 
-Knuth Shuffle, 즉 우리 지난 정렬할때 0...m번째 index까지 순회하면서 다른 원소랑 swap해서, m번째 index까지만 sort하는 방식이 제일 빠르다고 한다.  O(m) 에 끝날테니까. 배열도 이미 정의되어있고. (공간할당 x)
+Knuth Shuffle, 즉 우리 지난 정렬할때 0...m번째 index까지 순회하면서 다른 원소랑 swap해서, m번째 index까지만 sort하는 방식이 제일 빠르다고 한다.  O(m) O(mlogm) 에 끝날테니까. 배열도 이미 정의되어있고. (공간할당 x)
 
 </details>
 

@@ -76,6 +76,56 @@ def benchmark_insert(n, maxval=100000, bins_count=100):
 
 
 # Example Usage
-n = 1000  # Number of insertions
-results = benchmark_insert(n)
-print(results)
+# n = 1000  # Number of insertions
+# results = benchmark_insert(n)
+# print(results)
+
+import random
+import matplotlib.pyplot as plt
+from collections import Counter
+
+def floyd_random_selection(n, m):
+    selected = set()
+    for j in range(n - m + 1, n + 1):
+        t = random.randint(1, j)
+        if t in selected:
+            selected.add(j)
+        else:
+            selected.add(t)
+    return selected
+
+def random_selection_builtin(n, m):
+    return set(random.sample(range(1, n + 1), m))
+
+# 실험 설정
+n = 10000  # 전체 범위
+m = 10    # 선택할 개수
+trials = 100000
+
+# 데이터 수집
+counter_floyd = Counter()
+counter_builtin = Counter()
+
+for _ in range(trials):
+    counter_floyd.update(floyd_random_selection(n, m))
+    counter_builtin.update(random_selection_builtin(n, m))
+
+# 그래프 그리기
+fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+
+# Floyd 알고리즘 결과
+numbers_floyd, frequencies_floyd = zip(*sorted(counter_floyd.items()))
+axes[0].bar(numbers_floyd, [f / trials for f in frequencies_floyd], width=1.0, color='blue', alpha=0.7)
+axes[0].set_title("Floyd’s Algorithm")
+axes[0].set_xlabel("Number")
+axes[0].set_ylabel("Selection Probability")
+
+# 내장 함수 결과
+numbers_builtin, frequencies_builtin = zip(*sorted(counter_builtin.items()))
+axes[1].bar(numbers_builtin, [f / trials for f in frequencies_builtin], width=1.0, color='red', alpha=0.7)
+axes[1].set_title("random.sample()")
+axes[1].set_xlabel("Number")
+
+# 그래프 출력
+plt.tight_layout()
+plt.show()
