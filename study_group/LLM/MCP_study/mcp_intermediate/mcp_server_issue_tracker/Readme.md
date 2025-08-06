@@ -133,4 +133,60 @@ function calling (generate_sub_issue) 를 실행했고,
 
 
 
+# 2. PR 생성기
 
+이번에는 PR을 편하게 만들기 위해서 아래같은 함수를 만들었다. 
+
+```
+    @Tool(name="generate_pull_request" , description = "특정 브랜치와 비교해서 pull request를 생성하고 세부 커멘트를 달아 설명하기 위함")
+    public String generatePullRequest(
+            @ToolParam(description = "비교할 브랜치 이름") String baseBranch,
+            @ToolParam(description = "내가 PR을 생성하고 싶은 레포지토리의 url") String targetGithubRepoUrl
+    ) {
+        return String.format("""
+            github owner 이름은 good-service , repo 이름이 good-builder 야.
+            현재 브랜치에서 %s브랜치로 pull request를 생성할거야. %s 위치에 PR을 생성할거고.
+            현재 커밋되지 않은 변경사항들은 stash 해놔. 이번 PR에서 반영할 대상이 아니야.
+            각 커밋별로 세부 이슈 링크가 있다면 해당 이슈를 닫는다고 본문에 작성해줘.                        
+            제목은 [#109] 처럼 해결하려는 브랜치 이름에 사용된 이슈번호가 들어가 있어야해. 
+            PR 올리기 전에는 ./gradlew ktlintFormat ./gradlew ktlintCheck ./gradlew test 를 순차적으로 진행한 다음에 PR을 올려야 해.
+            프로젝트에 PR 템플릿이 있다면 해당 템플릿 양식을 지켜줘
+            생성한 pull request를 다시 보면서 중요한 부분은 해당 코드라인영역을 잡아서 설명을 달아줘. 다른 사람들이 집중적으로 볼 수 있도록 해.                                                               
+            """, baseBranch, targetGithubRepoUrl);
+    }
+```
+
+
+`            현재 커밋되지 않은 변경사항들은 stash 해놔. 이번 PR에서 반영할 대상이 아니야.`
+
+이걸 안붙이니까 무조건 git add 해서 전체 추가해버리더라. 
+
+![img_2.png](img_2.png)
+
+단순히 PR을 만들면 커멘트를 달아서 다른사람들이 볼 수 있게 하는 흐름은 제작하지 못하고, PR본문만 생성하고 끝나게 된다. 
+
+`생성한 pull request를 다시 보면서 중요한 부분은 해당 코드라인영역을 잡아서 설명을 달아줘. 다른 사람들이 집중적으로 볼 수 있도록 해.`
+
+하지만, 위 prompt를 추가해서 아래처럼 명령을 하면, 코드블럭에 대해서 설명을 하는 걸 추가할 수 있다. 
+
+
+```
+issue-tracker 툴의 generatePullRequest 툴을 사용해줘
+
+@https://github.com/good-service/good-builder/pull 에 pull request를 만들어줘
+develop브랜치로 머지하고 싶어 
+
+```
+
+
+# 3. MCP와 user rule의 차이 
+
+내 생각으로는 user rule은 까먹기도 하고, 특정 task를 진행할때 어떤 단계를 따라야할 지 적는 용도보다는, 성질, 성격을 정해주는 느낌이다.
+
+만약 어떤 순서에 따라 차례차례 뭔가를 진행하게 하기를 원한다면 mcp를 통해서 명령을 하는게 더 좋은 듯 하다. 
+
+그리고 인자를 받아서 인자에 대해서 추가적인 가공을 할 수도 있겠지. 예를들면, 항상 이놈의 github mcp plugin쓸 때, owner이랑 repo를 못찾는다. 
+
+우리의 경우는 owner이랑 repo가 github url 뒤에 딸려오는 것들이라는 것을 아니까, 파싱해서 owner이랑 repo를 정해줄 수 있겠다. 
+
+다음엔 무엇을? 
