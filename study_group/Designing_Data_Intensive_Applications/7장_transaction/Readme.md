@@ -161,8 +161,11 @@ Read DB (Query Model)
 ```
 
 1️⃣ Event 기반 projection (가장 정석)
+
 OrderCreated
+
 PaymentCompleted
+
 InventoryReserved
 
 이 이벤트를 소비해서 read model을 업데이트합니다.
