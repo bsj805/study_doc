@@ -2,6 +2,21 @@
 https://qwen.ai/blog?id=qwen3-vl
 
 # Qwen3-VL에서 뭐가 좋아졌나요? 
+
+네이버가 독자 파운데이션 모델에서 쓴건 qwen2.5 VL 에서 이미지, 동영상 vision encoder 
+
+https://www.clova.ai/tech-blog/%EC%9A%B0%EB%A6%AC%EC%9D%98-%EB%88%88%EA%B3%BC-%EA%B7%80%EB%A1%9C-%ED%98%84%EC%9E%A5%EC%9D%84-%EC%9D%B4%ED%95%B4%ED%95%98%EB%8B%A4-%EB%8F%85%EC%9E%90-%EC%9D%B8%EC%BD%94%EB%8D%94%EC%99%80
+
+이 글을 보니 재밌는게, 
+
+2026년3월 아티클인데 
+
+![img_13.png](img_13.png)
+
+qwen2.5vl 에서 있던 local windowing도 나오더라. 
+
+
+
 2025년 9월 23일 
 
 qwen3-VL의 목표는 이미지나 비디오 보는거 뿐만아니라, 세상을 이해하고, 이벤트를 해석하고, action을 수행하기 위함이다. 
@@ -103,6 +118,22 @@ Interleaved-MRoPE: 각 축에 여러 주파수 대역을 교차 배분
 
 그래서 `<3.0 second><토큰임베딩>` 이런식으로 시간을 전달하면, 언어모델의 능력으로 시간을 처리하게 되고, 컨텍스트 토큰을 조금 더 쓰게되지만, video grounding 같은데에 (비디오에서 무슨일 일어났는지 표현) 도움 된다. 
 
+Q. 그러면 더이상 t는 MRoPE에 안쓰고(Query, Key vector 회전시키는데 안쓰고), h,w만 쓰나? 
+
+A. 아님. 여전히 쓰지만, 각 프레임은 같은 t를 가지긴 하고, 다음 프레임은 t=2를 가짐. 
+
+다만 기존에 dynamic fps 방식으로 하려면 2시간짜리 영상을 학습시키려면 동일한 2시간짜리 영상을 1초당 1프레임, 2프레임, 4프레임 으로 쪼갠 학습데이터가 수만개 필요했을것. -> 학습 비효율 
+
+```
+  HF Qwen3VL 구현의 get_rope_index를 보면, 비디오를 아래처럼 프레임 단위로 쪼갭니다.
+  <0.5 seconds><vision_start>[frame1 토큰들]<vision_end><1.5 seconds><vision_start>[frame2 토큰들]<vision_end>...
+  - 이를 위해 video_grid_thw를 t번 repeat하고 각각을 t=1로 바꿉니다. 그러면 각 프레임은 t=1짜리 이미지처럼 처리됩니다.
+  - 한 프레임 안에서는 t 성분이 상수이고, h와 w만 변합니다.
+  - 프레임 사이의 순서는 앞 토큰들의 최대 position + 1에서 offset이 시작되는 방식, 즉 일반 텍스트처럼 순차적으로 증가하는 offset으로 정해집니다. 중간에 끼는 timestamp 텍스트 토큰도 이 offset을 밀어냅니다.
+  - 그래서 t 축은 남아 있지만, 2.5-VL처럼 "시간에 비례해서 커지는 temporal ID" 역할은 하지 않습니다.
+```
+
+
 
 ### DeepStack 설명 
 
@@ -133,3 +164,14 @@ residual connection이
 ![img_12.png](img_12.png)
 
 이렇게 hidden state에 이미지 토큰을 그대로 더하는 방식 
+
+`hidden_states[visual_pos_masks] += deepstack_visual_embeds[layer_idx]`
+
+## 별첨: 네이버의 최신모델 
+
+https://www.clova.ai/tech-blog/%EC%9A%B0%EB%A6%AC%EC%9D%98-%EB%88%88%EA%B3%BC-%EA%B7%80%EB%A1%9C-%ED%98%84%EC%9E%A5%EC%9D%84-%EC%9D%B4%ED%95%B4%ED%95%98%EB%8B%A4-%EB%8F%85%EC%9E%90-%EC%9D%B8%EC%BD%94%EB%8D%94%EC%99%80?utm_source=chatgpt.com
+
+![img_14.png](img_14.png)
+
+
+
