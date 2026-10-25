@@ -13,10 +13,10 @@ https://qwen.ai/blog?id=qwen2-vl
                 visual features
                       │
                       ▼
-              visual tokens
+              visual tokens  p0, p1, p2 .. ㅇㅣㅁ베딩 
                       │
                       │
-TEXT ────────────────┐│
+TEXT ────────────────┐│   [p0] = (w0, h0)  [p1] = (w1, h1) 
                      ▼▼
              ┌─────────────────┐
              │     Qwen2       │
